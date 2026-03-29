@@ -58,7 +58,7 @@ def analyze_with_llm(diff_content, api_key):
     )
 
     response = client.chat.completions.create(
-        model="llama3-8b-8192", 
+        model="llama-3.1-8b-instant", 
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Git Diff Changes:\n{diff_content}"}

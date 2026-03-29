@@ -1,0 +1,30 @@
+name: AI Architecture Linter
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  analyze-architecture:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Architecture Linter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # LLM_API_KEY secret'ını GitHub Repo Settings -> Secrets'a eklemelisiniz!
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }} 
+        run: |
+          python src/linter.py

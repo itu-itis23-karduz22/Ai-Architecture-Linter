@@ -1,0 +1,117 @@
+name: AI Architecture Linter – PR Review
+
+on:
+  pull_request:
+    paths:
+      - "**.py"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lint:
+    name: Architecture Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # needed to diff against base branch
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Collect changed Python files
+        id: changed
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+                  | grep '\.py$' | tr '\n' ' ')
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Run AI Architecture Linter
+        id: linter
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          FILES="${{ steps.changed.outputs.files }}"
+          if [ -z "$FILES" ]; then
+            echo "No Python files changed."
+            echo "report=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ai-linter $FILES \
+            --format markdown \
+            --output /tmp/linter_report.md \
+            --no-fail-on-error || true
+          REPORT=$(cat /tmp/linter_report.md)
+          # Escape newlines for GitHub Actions output
+          REPORT="${REPORT//'%'/'%25'}"
+          REPORT="${REPORT//$'\n'/'%0A'}"
+          REPORT="${REPORT//$'\r'/'%0D'}"
+          echo "report=$REPORT" >> "$GITHUB_OUTPUT"
+
+      - name: Post report as PR comment
+        if: steps.linter.outputs.report != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const report = `${{ steps.linter.outputs.report }}`
+              .replace(/%25/g, '%')
+              .replace(/%0A/g, '\n')
+              .replace(/%0D/g, '\r');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(
+              c => c.user.type === 'Bot' &&
+                   c.body.includes('AI Architecture Linter Report')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: report,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: report,
+              });
+            }
+
+      - name: Upload full JSON report as artifact
+        if: always()
+        run: |
+          FILES="${{ steps.changed.outputs.files }}"
+          if [ -n "$FILES" ]; then
+            ai-linter $FILES \
+              --format json \
+              --output /tmp/linter_report.json \
+              --no-fail-on-error || true
+          fi
+
+      - name: Save artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-lint-report
+          path: /tmp/linter_report.*
+          if-no-files-found: ignore
